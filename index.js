@@ -1,36 +1,39 @@
+// index.js
+
 // Adiciona o dotenv para carregar as variáveis do arquivo .env (útil em desenvolvimento local)
 require('dotenv').config();
 
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
-const axios = require('axios'); 
-const fs = require('fs'); 
+const axios = require('axios');
+const fs = require('fs');
 
 // ------------------------------------------------------------------
 // --- CONFIGURAÇÃO RÁPIDA PARA TESTE LOCAL ---
 // ------------------------------------------------------------------
-const DELAY_MS = 2000; 
+const DELAY_MS = 2000;
 const delay = ms => new Promise(res => setTimeout(res, ms));
 
-// URLs de Webhook agora carregadas das VARIÁVEIS DE AMBIENTE
-const DISCORD_WEBHOOK_ALERTA = process.env.DISCORD_WEBHOOK_ALERTA; 
-const DISCORD_WEBHOOK_METRICAS = process.env.DISCORD_WEBHOOK_METRICAS; 
+// URLs de Webhook carregadas das VARIÁVEIS DE AMBIENTE
+const DISCORD_WEBHOOK_ALERTA = process.env.DISCORD_WEBHOOK_ALERTA;
+const DISCORD_WEBHOOK_METRICAS = process.env.DISCORD_WEBHOOK_METRICAS;
 
 // ------------------------------------------------------------------
-// --- VARIÁVEIS GLOBAIS E PERSISTÊNCIA DE DADOS ---
-// O restante do seu código permanece o mesmo...
+// --- VARIÁVEIS GLOBAIS E PERSISTÊNCIA DE DADOS (USAR MONGODB NO FUTURO) ---
 // ------------------------------------------------------------------
 
+// ⚠️ ATENÇÃO: userStates é a variável de estado que DEVE SER MIGRADA PARA O MONGODB.
+// No código atual, usa a memória do servidor, o que PODE FALHAR em produção.
 const userStates = {}; 
 const SEQUENCE_FILE = './protocol_sequence.txt';
-let lastSequentialNumber = 0; 
+let lastSequentialNumber = 0;
 const tipoSolicitacaoMap = {
     'lote_sujo': 1,
     'empresa': 2,
     'ocupacao_irregular': 3
 };
 
-// BANCO DE DADOS SIMULADO PARA STATUS DE PROTOCOLO
+// BANCO DE DADOS SIMULADO PARA STATUS DE PROTOCOLO (Substitua por MongoDB)
 const protocolDatabase = {
     '2025.12.01.1.0001': { status: 'Finalizado com notificação', details: 'Notificação de limpeza emitida em 05/12/2025.' },
     '2025.12.05.2.0002': { status: 'Em Fiscalização', details: 'Fiscal designado para visita em 10/12/2025.' },
@@ -39,7 +42,7 @@ const protocolDatabase = {
 
 
 // ------------------------------------------------------------------
-// --- FUNÇÕES DE PERSISTÊNCIA DE SEQUÊNCIA ---
+// --- FUNÇÕES DE PERSISTÊNCIA DE SEQUÊNCIA (MIGRE PARA MONGODB COUNTER) ---
 // ------------------------------------------------------------------
 
 /**
@@ -49,7 +52,6 @@ function loadLastSequence() {
     try {
         if (fs.existsSync(SEQUENCE_FILE)) {
             const data = fs.readFileSync(SEQUENCE_FILE, 'utf8');
-            // Garante que o número carregado é um inteiro válido, senão usa 0
             lastSequentialNumber = parseInt(data) || 0;
             console.log(`[INFO] Último número sequencial carregado: ${lastSequentialNumber}`);
         }
@@ -74,7 +76,7 @@ function saveLastSequence(number) {
 // ------------------------------------------------------------------
 
 /**
- * Gera o número de protocolo e salva o novo número sequencial.
+ * Gera o número de protocolo e salva o novo número sequencial (NÃO É ATÔMICO!).
  */
 function generateProtocolNumber(typeKey) {
     const now = new Date();
@@ -96,7 +98,6 @@ function generateProtocolNumber(typeKey) {
 
 async function sendToDiscord(title, fields, color = '3447003') { 
     
-    // As variáveis de ambiente são usadas aqui
     let targetWebhook = DISCORD_WEBHOOK_ALERTA;
 
     if (title.includes("PESQUISA DE SATISFAÇÃO")) {
@@ -209,9 +210,13 @@ client.on('ready', () => {
 });
 
 client.on('message', msg => {
-    if (!msg.isGroup) {
-        handleMessage(msg.from, msg); 
+    // ⬇️ IGNORA MENSAGENS DE GRUPOS (Somente monitora, não responde)
+    if (msg.isGroup) {
+        return; 
     }
+    
+    // Processa mensagens individuais
+    handleMessage(msg.from, msg);
 });
 
 
@@ -366,7 +371,7 @@ async function handleMessage(to, msg) {
             response = 'Opção inválida. ⚠️ Por favor, digite *1, 2 ou 3* ou *voltar* para ver as opções de denúncia.';
         }
         
-    // CORREÇÃO DE SEGURANÇA: Checagem de nulo
+    // CORREÇÃO DE SEGURANÇA: Checagem de nulo (LOTE SUJO - ENDEREÇO)
     } else if (currentState && currentState.step === 'denuncia_endereco') {
         userStates[userId] = { ...currentState, endereco: messageBody, step: 'denuncia_fotos_pergunta' }; 
         // PADRONIZADO: **Negrito**
@@ -446,7 +451,6 @@ Você deseja enviar *FOTOS* da ocorrência agora? (Máximo de 5 imagens)
             const generatedProtocol = generateProtocolNumber(currentState.type);
             
             // Nota: O tratamento das fotos (download/upload para um servidor de arquivos) deve ser adicionado aqui.
-            // O código atual apenas registra no Discord que elas foram recebidas.
             
             const fields = [
                 { name: "Protocolo", value: generatedProtocol, inline: true },
@@ -482,7 +486,7 @@ Você deseja enviar *FOTOS* da ocorrência agora? (Máximo de 5 imagens)
             }
             
             userStates[userId] = { step: 'satisfaction_survey', type: 'acompanhamento', protocol: protocol };
-            // PADRONIZADO: **Negrito**. Status em *itálico* (formato `*status*`) é mantido intencionalmente para contraste.
+            // PADRONIZADO: **Negrito**. Status em *itálico*
             response = `Protocolo *${protocol}* encontrado! ✅ Status atual: *${currentStatus}*. Detalhes: ${additionalDetails}. Para mais detalhes, acesse: [Link de Consulta do Protocolo].
             
 *Para finalizar, por favor, avalie nosso atendimento. Digite uma nota de 1 (Ruim) a 5 (Excelente).* ⭐`;
